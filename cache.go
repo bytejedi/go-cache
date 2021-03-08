@@ -930,25 +930,26 @@ type keyAndValue struct {
 
 // Delete all expired items from the cache.
 func (c *cache) DeleteExpired() {
-	var evictedItems []keyAndValue
+	var evictedItems, cleanupItems []keyAndValue
 	now := time.Now().UnixNano()
 	c.mu.Lock()
 	for k, v := range c.items {
-		// 执行额外的任务
-		if c.onCleanup != nil {
-			c.onCleanup(k, v.Object)
-		}
 		// "Inlining" of expired
 		if v.Expiration > 0 && now > v.Expiration {
 			ov, evicted := c.delete(k)
 			if evicted {
 				evictedItems = append(evictedItems, keyAndValue{k, ov})
 			}
+		} else if c.onCleanup != nil { // cleanup items
+			cleanupItems = append(cleanupItems, keyAndValue{k, v.Object})
 		}
 	}
 	c.mu.Unlock()
 	for _, v := range evictedItems {
 		c.onEvicted(v.key, v.value)
+	}
+	for _, v := range cleanupItems {
+		c.onCleanup(v.key, v.value)
 	}
 }
 
@@ -961,6 +962,9 @@ func (c *cache) OnEvicted(f func(string, interface{})) {
 	c.mu.Unlock()
 }
 
+// Set up the (optional) function to be called with the key and value when the
+// item is routinely checked for expiration. (Excluding the current check expired items)
+// Set to nil to disable.
 func (c *cache) OnCleanup(f func(string, interface{})) {
 	c.mu.Lock()
 	c.onCleanup = f
